@@ -71,8 +71,7 @@ class GRAMREC(GeneralRecommender):
         # Create GCN layers for different modalities
         self.create_gcn_layers()
 
-        # Create user graph and result embeddings
-        # self.user_graph = User_Graph_sample(self.n_users, self.dim_latent)
+        # Create result embeddings
         self.result_embed = nn.Parameter(
             nn.init.xavier_normal_(torch.tensor(np.random.randn(self.n_nodes, self.dim_latent)))
         ).to(self.device)
@@ -182,40 +181,37 @@ class GRAMREC(GeneralRecommender):
         cols = inter_mat.col + self.n_users
         return np.column_stack((rows, cols))
 
-    def forward(self): # interaction ([3, 2048])
-        id_rep, id_preference = self.id_gcn(self.id_feat, self.masked_adj) # ([26495, 64])
-        id_rep_data = id_rep # ([26495, 64])
+    def forward(self): 
+        id_rep, id_preference = self.id_gcn(self.id_feat, self.masked_adj) 
+        id_rep_data = id_rep 
 
-        representation = id_rep_data # ([26495, 64])
+        representation = id_rep_data
 
         if self.v_feat is not None:
-            self.v_rep, self.v_preference = self.v_gcn(self.v_feat, self.masked_adj) #self.id_feat ([7050, 64]) self.v_feat ([7050, 4096])
+            self.v_rep, self.v_preference = self.v_gcn(self.v_feat, self.masked_adj) 
             # Eq.6
-            representation = torch.cat((id_rep_data, self.v_rep), dim=1) # ([26495, 128])
+            representation = torch.cat((id_rep_data, self.v_rep), dim=1)
 
         if self.t_feat is not None:
-            self.t_rep, self.t_preference = self.t_gcn(self.t_feat, self.masked_adj) # self.t_feat ([7050, 384])
+            self.t_rep, self.t_preference = self.t_gcn(self.t_feat, self.masked_adj)
             representation = torch.cat((id_rep_data, self.t_rep) if representation is None
-                                       else (id_rep_data, self.v_rep, self.t_rep), dim=1) # ([26495, 192])
+                                       else (id_rep_data, self.v_rep, self.t_rep), dim=1) 
 
-        item_rep = representation[self.n_users:] # ([7050, 192])
+        item_rep = representation[self.n_users:]
         # Eq.13
-        h_i = item_rep # A_i^{L_i} ([7050, 192])
+        h_i = item_rep 
         for i in range(self.n_layers):
-            # Eq.12 加权聚合， mm_adj 是 item-item KNN 图
-            h_i = torch.sparse.mm(self.mm_adj, h_i) # ([7050, 192])
-        item_rep = item_rep + h_i # E_f(I) + A_i^{L_i} ([7050, 192])
+            h_i = torch.sparse.mm(self.mm_adj, h_i) 
+        item_rep = item_rep + h_i
         
         user_rep = representation[:self.n_users]
-        id_rep = user_rep[:, :self.dim_latent] # ([19445, 64])
-        v_rep = user_rep[:, self.dim_latent: 2 * self.dim_latent] # ([19445, 64])
-        t_rep = user_rep[:, 2 * self.dim_latent:] # ([19445, 64])
-        _att2 = F.softmax(self.theta, dim=1) # ([19445, 3, 1])
-        user_rep = torch.cat((_att2[:, 0, :] * id_rep, _att2[:, 1, :] * v_rep, _att2[:, 2, :] * t_rep), dim=1) # ([19445, 192])
-        # Eq.14
-        self.result_embed = torch.cat((user_rep, item_rep), dim=0) # ([26495, 192])
+        id_rep = user_rep[:, :self.dim_latent]
+        v_rep = user_rep[:, self.dim_latent: 2 * self.dim_latent]
+        t_rep = user_rep[:, 2 * self.dim_latent:] 
+        _att2 = F.softmax(self.theta, dim=1) 
+        user_rep = torch.cat((_att2[:, 0, :] * id_rep, _att2[:, 1, :] * v_rep, _att2[:, 2, :] * t_rep), dim=1) 
+        self.result_embed = torch.cat((user_rep, item_rep), dim=0)
 
-        # return user_rep, item_rep # 换成bpr的时候记得换
         return F.normalize(user_rep, dim=-1), F.normalize(item_rep, dim=-1)
 
     ##### LOSS
@@ -229,7 +225,6 @@ class GRAMREC(GeneralRecommender):
         sim = x @ x.t()
         dist2 = 2 - 2 * sim
 
-        # 去掉对角线，避免 self-distance
         mask = ~torch.eye(x.size(0), dtype=torch.bool, device=x.device)
         dist2 = dist2[mask]
 
@@ -240,8 +235,6 @@ class GRAMREC(GeneralRecommender):
         return (loss_intra + loss_inter) / 2
     
     def bpr_loss(self, users, pos_items, neg_items):
-        # users=h_u  pos_items=h_i或h_i^m  neg_items=h_j或h_j^m
-        # h_u^T * h_i就是预测评分呐，和正样本点积的结果肯定高，和负样本点积的结果肯定低呐，二者相减越大越好呐，因为前面有个负号（看return上面那句）
         pos_scores = torch.sum(torch.mul(users, pos_items), dim=1)
         neg_scores = torch.sum(torch.mul(users, neg_items), dim=1)
 
@@ -251,36 +244,23 @@ class GRAMREC(GeneralRecommender):
         return mf_loss
 
     def calculate_loss(self, interaction):
-        users = interaction[0] # ([2048])
-        pos_items = interaction[1] # ([2048])
-        neg_items = interaction[2] # ([2048])
+        users = interaction[0]
+        pos_items = interaction[1]
+        neg_items = interaction[2]
         
-        users_emb, items_emb = self.forward() # ([19445, 192]) ([7050, 192])
-        batch_users_emb = users_emb[users] # ([2048, 192])
-        batch_pos_emb = items_emb[pos_items] # ([2048, 192])
-        batch_neg_emb = items_emb[neg_items] # ([2048, 192])
-
+        users_emb, items_emb = self.forward()
+        batch_users_emb = users_emb[users]
+        batch_pos_emb = items_emb[pos_items]
+        batch_neg_emb = items_emb[neg_items]
         id_i_emb = batch_neg_emb[:, :self.dim_latent]
         v_i_emb = batch_neg_emb[:, self.dim_latent: 2 * self.dim_latent]
         t_i_emb = batch_neg_emb[:, 2 * self.dim_latent:]
-
-        # mf_loss = self.bpr_loss(batch_users_emb, batch_pos_emb, batch_neg_emb)
-
-        # ---------- 原始 ID BPR ----------
         align = self.alignment(batch_users_emb, batch_pos_emb)
-        
-        # uniform = self.gamma * (self.uniformity(batch_users_emb) + self.uniformity(batch_neg_emb)) / 2 # 全部都搞一块的
-        uniform = self.gamma * ( # nb 说明用户的向量别拆开（拆开就降），物品的向量得拆开（拆开就涨！各模态分别均匀性）（论文可写）
+        uniform = self.gamma * ( 
             self.uniformity(batch_users_emb) + 
-            # self.uniformity(batch_neg_emb)) / 2
             self.uniformity(v_i_emb) + self.uniformity(t_i_emb) + self.uniformity(id_i_emb)) / 2 
-        
         volume_align = self.lambda_volume * self.gram_loss(id_i_emb, v_i_emb, t_i_emb)
-    
-        mf_loss = align + uniform + volume_align
-        # mf_loss = mf_loss + volume_align
-        
-        # Eq.16
+        mf_loss = align + uniform + volume_align        
         return mf_loss
 
     def full_sort_predict(self, interaction):
@@ -307,19 +287,16 @@ class GCNLayer(torch.nn.Module):
         self.MLP_1 = nn.Linear(4 * self.dim_latent, self.dim_latent)
 
     def forward(self, features, adj):
-        # Eq.2 
-        temp_features = self.MLP_1(F.leaky_relu(self.MLP(features))) if self.dim_latent else features # ([7050, 64])
-        x = torch.cat((self.preference, temp_features), dim=0) # ([26495. 64])
-        x = F.normalize(x, dim=1) # ([26495. 64])
-        ego_embeddings = x # ([26495. 64])
-        all_embeddings = [ego_embeddings] # ([26495. 64])
+        temp_features = self.MLP_1(F.leaky_relu(self.MLP(features))) if self.dim_latent else features
+        x = torch.cat((self.preference, temp_features), dim=0)
+        x = F.normalize(x, dim=1)
+        ego_embeddings = x 
+        all_embeddings = [ego_embeddings]
 
-        # Eq.4
         for layer_idx in range(self.n_ui_layers):
-            side_embeddings = torch.sparse.mm(adj, ego_embeddings) # Ã E^(l−1)
+            side_embeddings = torch.sparse.mm(adj, ego_embeddings)
             ego_embeddings = side_embeddings
             all_embeddings += [ego_embeddings]
-        # Eq.5
         representation = torch.stack(all_embeddings, dim=0).sum(dim=0)
 
         return representation, self.preference
@@ -329,24 +306,17 @@ def pmrl_gram_loss(x, y, z, tau_intra, tau_inter):
     x = F.normalize(x, dim=-1)
     y = F.normalize(y, dim=-1)
     z = F.normalize(z, dim=-1)
-    stacked = torch.stack([x, y, z], dim=-1) # [2048, 64, 3]
-    gram = torch.matmul(stacked.transpose(1, 2), stacked) # [2048, 3, 3]
-    eigvals, eigvecs = torch.linalg.eigh(gram) # [2048, 3]  [2048, 3, 3]
-    eigvals = torch.clamp(eigvals, min=1e-12) # [2048, 3]
-    singular_values = torch.sqrt(eigvals).flip(dims=[1]) # sort to descending # [2048, 3]
-
-    logits_intra = singular_values / tau_intra # [2048, 3]
-    target_intra = torch.zeros(logits_intra.size(0), dtype=torch.long, device=logits_intra.device) # ([2048])
-    loss_intra = F.cross_entropy(logits_intra, target_intra)
-
-    principal_right = eigvecs[:, :, -1] # top singular vector in modal space # [2048, 3]
-    principal = torch.matmul(stacked, principal_right.unsqueeze(-1)).squeeze(-1) # [2048, 64]
-    principal = F.normalize(principal, dim=1) # [2048, 64]
+    stacked = torch.stack([x, y, z], dim=-1)
+    gram = torch.matmul(stacked.transpose(1, 2), stacked)
+    eigvals, eigvecs = torch.linalg.eigh(gram)
+    eigvals = torch.clamp(eigvals, min=1e-12) 
+    principal = eigvecs[:, :, -1] 
+    principal = F.normalize(principal, dim=1)
     if principal.size(0) <= 1:
         loss_inter = torch.zeros((), device=principal.device, dtype=principal.dtype)
     else:
-        logits_inter = torch.matmul(principal, principal.t()) / tau_inter # [2048, 2048]
-        target_inter = torch.arange(principal.size(0), device=principal.device) # [2048]
+        logits_inter = torch.matmul(principal, principal.t()) / tau_inter 
+        target_inter = torch.arange(principal.size(0), device=principal.device)
         loss_inter = F.cross_entropy(logits_inter, target_inter)
 
     return loss_intra, loss_inter

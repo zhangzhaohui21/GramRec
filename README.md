@@ -37,7 +37,7 @@ GramRec/
 
 ## Data Preparation
 
-The project uses the processed Amazon Baby, Clothing, and Sports datasets. See [data/README.md](data/README.md) for the download link. After downloading the data, place it under `data/` using lowercase directory names that match the configuration files:
+The project uses the processed Amazon Baby, Clothing, and Sports datasets. See [data/README.md](data/README.md) for the download link. After downloading the data, place it under `data/` using  directory names that match the configuration files:
 
 ```text
 data/
